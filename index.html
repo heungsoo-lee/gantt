@@ -51,6 +51,10 @@
   .head .corner{position:sticky;left:0;z-index:30;width:var(--left-w);flex:0 0 var(--left-w);
     background:var(--surface);border-bottom:1px solid var(--line-strong);border-right:1px solid var(--line-strong);
     display:flex;align-items:flex-end}
+  .resizer{position:absolute;top:0;right:-5px;width:11px;height:100%;cursor:col-resize;z-index:31;
+    display:flex;align-items:center;justify-content:center;touch-action:none}
+  .resizer::after{content:"";width:3px;height:20px;border-radius:2px;background:var(--line-strong)}
+  .resizer:hover::after,.resizer.drag::after{background:var(--accent)}
   .corner .ch{display:flex;width:100%;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;
     letter-spacing:.4px;padding:0 10px 7px;gap:6px}
   .corner .ch .c-sw{width:20px}
@@ -94,8 +98,7 @@
   .bar{position:absolute;top:9px;height:24px;border-radius:5px;background:var(--barc);
     box-shadow:0 1px 0 rgba(0,0,0,.04);display:flex;align-items:center;overflow:hidden}
   .bar .fill{position:absolute;left:0;top:0;bottom:0;background:rgba(0,0,0,.22)}
-  .bar .lbl{position:relative;font-size:11px;color:#fff;font-weight:600;padding:0 8px;white-space:nowrap;
-    text-shadow:0 1px 1px rgba(0,0,0,.25)}
+  .bar .lbl{position:relative;font-size:11px;font-weight:600;padding:0 8px;white-space:nowrap}
   .today-line{position:absolute;top:0;bottom:0;width:2px;background:var(--today);z-index:8;pointer-events:none}
   .today-flag{position:absolute;top:0;transform:translateX(-50%);background:var(--today);color:#fff;
     font-family:var(--mono);font-size:10px;padding:2px 6px;border-radius:0 0 5px 5px;white-space:nowrap;z-index:22}
@@ -134,8 +137,7 @@
     align-items:center;overflow:hidden;pointer-events:auto;cursor:pointer}
   .cal-bar.cutL{border-top-left-radius:0;border-bottom-left-radius:0}
   .cal-bar.cutR{border-top-right-radius:0;border-bottom-right-radius:0}
-  .cal-bar span{font-size:10.5px;color:#fff;font-weight:600;padding:0 6px;white-space:nowrap;
-    text-shadow:0 1px 1px rgba(0,0,0,.28)}
+  .cal-bar span{font-size:10.5px;font-weight:600;padding:0 6px;white-space:nowrap}
 
   /* ---------- list ---------- */
   .list{padding:10px 12px 60px;max-width:620px;margin:0 auto}
@@ -250,12 +252,12 @@
 const DAY=86400000;
 const MONTHS=["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월"];
 const DOW=["일","월","화","수","목","금","토"];
-const BARC=["#0E7490","#4338CA","#B45309","#15803D","#9333EA","#0F766E","#BE185D"];
-const SWATCHES=["#0E7490","#4338CA","#B45309","#15803D","#9333EA","#0F766E","#BE185D","#E4572E","#CA8A04","#475569"];
+const BARC=["#D2542F","#C08A1E","#6E7A34","#1F8E7D","#2C7A82","#5B6777","#3C6091","#5A5391","#8A4A6F","#6E5849"];
+const SWATCHES=["#D2542F","#C08A1E","#6E7A34","#1F8E7D","#2C7A82","#5B6777","#3C6091","#5A5391","#8A4A6F","#6E5849"];
 const ZOOM={day:{w:30,pad:3},week:{w:11,pad:7},month:{w:4.2,pad:16}};
 const CAL_LANES=5, LANE_H=20, LANE_TOP=24;
 
-let state={view:"gantt",zoom:"week",tasks:[],cal:null,calAll:false};
+let state={view:"gantt",zoom:"week",tasks:[],cal:null,calAll:false,leftW:346};
 const openWeeks=new Set();
 let flashId=null;
 
@@ -270,7 +272,7 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;","
 
 /* ---- storage ---- */
 const KEY="gantt.v1";
-function save(){try{localStorage.setItem(KEY,JSON.stringify({view:state.view,zoom:state.zoom,calAll:state.calAll,tasks:state.tasks}));}catch(e){}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify({view:state.view,zoom:state.zoom,calAll:state.calAll,leftW:state.leftW,tasks:state.tasks}));}catch(e){}}
 function loadLocal(){try{const s=localStorage.getItem(KEY);return s?JSON.parse(s):null;}catch(e){return null;}}
 
 /* ---- encode / decode ----
@@ -328,6 +330,12 @@ function dec(text){
 
 let _n=0; function uid(){return "t"+Date.now().toString(36)+(_n++);}
 function colorOf(t,i){return t.color||BARC[i%BARC.length];}
+function inkOn(hex){ // 막대 색 밝기에 따라 흰/검정 글씨 선택
+  const h=hex.replace("#",""); const r=parseInt(h.substr(0,2),16),g=parseInt(h.substr(2,2),16),b=parseInt(h.substr(4,2),16);
+  const lin=c=>{c/=255;return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4);};
+  const L=0.2126*lin(r)+0.7152*lin(g)+0.0722*lin(b);
+  return (1.05/(L+0.05) >= (L+0.05)/0.05) ? "#fff" : "#141414";
+}
 function sample(){const b=today0();
   const mk=(n,s,l,p)=>({id:uid(),name:n,start:fmtD(addDays(b,s)),end:fmtD(addDays(b,s+l)),progress:p});
   return [mk("문헌 조사",-7,6,100),mk("모델 개발",0,13,45),mk("시험·검증",10,9,0),mk("보고서 작성",18,7,0)];}
@@ -335,6 +343,7 @@ function sample(){const b=today0();
 /* ================= dispatcher ================= */
 function render(){
   closePop();
+  document.documentElement.style.setProperty("--left-w",(state.leftW||346)+"px");
   document.getElementById("zoom").classList.toggle("hide",state.view!=="gantt");
   const ba=document.getElementById("btn-all");
   ba.classList.toggle("hide",state.view!=="cal");
@@ -397,12 +406,12 @@ function viewGantt(){
       +'</div>'
       +'<div class="r-time" style="width:'+tlw+'px">'+weCells
         +'<div class="bar" style="left:'+left+'px;width:'+w+'px;--barc:'+c+'">'
-        +'<div class="fill" style="width:'+pg+'%"></div><span class="lbl">'+pg+'%</span></div>'
+        +'<div class="fill" style="width:'+pg+'%"></div><span class="lbl" style="color:'+inkOn(c)+'">'+pg+'%</span></div>'
       +'</div></div>';
   });
   return '<div class="grid"><div class="head">'
     +'<div class="corner"><div class="ch"><span class="c-sw"></span><span class="c-name">작업명</span>'
-    +'<span class="c-date">시작</span><span class="c-date">종료</span><span class="c-prog">진행</span><span class="c-x"></span></div></div>'
+    +'<span class="c-date">시작</span><span class="c-date">종료</span><span class="c-prog">진행</span><span class="c-x"></span></div><div class="resizer" id="resizer" title="드래그하여 너비 조절"></div></div>'
     +'<div class="timeline-head" style="width:'+tlw+'px">'
       +'<div style="position:relative;height:0"><div class="today-flag" style="left:'+tdX+'px">오늘 '+shortD(fmtD(td))+'</div></div>'
       +'<div class="th-months">'+months+'</div><div class="th-days">'+days+'</div></div></div>'
@@ -422,6 +431,14 @@ function viewCal(){
   const segs=state.tasks.map((t,i)=>({i,t,s:parseD(t.start),e:parseD(t.end),c:colorOf(t,i)}))
     .sort((a,b)=>a.s-b.s || (b.e-b.s)-(a.e-a.s));
 
+  // ---- fit the whole month into the visible area ----
+  const stageEl=document.getElementById("stage");
+  const availH=(stageEl?stageEl.clientHeight:window.innerHeight-120);
+  const HEADS=54+29;                     // cal-nav + weekday row
+  const MINWK=60;                        // never thinner than this (then it scrolls)
+  const wkH=Math.max(MINWK, Math.floor((availH-HEADS-2)/weeks));
+  const laneFit=Math.max(1, Math.floor((wkH-LANE_TOP-4)/LANE_H));  // lanes that fit in a week
+
   let html='<div class="cal"><div class="cal-nav">'
     +'<button id="cal-prev">‹</button><span class="mlabel">'+y+'년 '+MONTHS[mo]+'</span><button id="cal-next">›</button></div>'
     +'<div class="cal-dow">'+DOW.map(d=>'<div>'+d+'</div>').join("")+'</div>';
@@ -438,20 +455,20 @@ function viewCal(){
       (lanes[lane]=lanes[lane]||[]).push([a,b]);
       placed.push({g,a,b,lane});
     }
-    // 2) decide how many lanes to show
+    // 2) cap lanes to what fits (unless this week is expanded)
     const expanded=state.calAll||openWeeks.has(wkey);
-    const cap=expanded?Infinity:CAL_LANES;
+    const needMore=lanes.length>laneFit;
+    const cap=expanded?Infinity:(needMore?Math.max(1,laneFit-1):laneFit); // reserve a row for +N
     let bars="", overflow={};
     for(const p of placed){
       if(p.lane>=cap){ for(let d=p.a;d<=p.b;d++) overflow[d]=(overflow[d]||0)+1; continue; }
       bars+='<div class="cal-bar'+(p.g.s<ws?" cutL":"")+(p.g.e>we?" cutR":"")+'" data-tid="'+p.g.t.id+'" '
         +'style="left:calc('+(p.a/7*100)+'% + 2px);width:calc('+((p.b-p.a+1)/7*100)+'% - 4px);'
-        +'top:'+(LANE_TOP+p.lane*LANE_H)+'px;--barc:'+p.g.c+'"><span>'+esc(p.g.t.name)+'</span></div>';
+        +'top:'+(LANE_TOP+p.lane*LANE_H)+'px;--barc:'+p.g.c+'"><span style="color:'+inkOn(p.g.c)+'">'+esc(p.g.t.name)+'</span></div>';
     }
-    const used=Math.min(lanes.length,cap);
     const hasMore=Object.keys(overflow).length>0;
-    const canCollapse=expanded&&!state.calAll&&lanes.length>CAL_LANES;
-    const h=LANE_TOP+used*LANE_H+(hasMore||canCollapse?18:6);
+    // fixed height so the month always fills the screen; expanded busy weeks may grow & scroll
+    const h=expanded?Math.max(wkH,LANE_TOP+lanes.length*LANE_H+18):wkH;
     let cells="";
     for(let d=0;d<7;d++){
       const dt=addDays(ws,d), out=dt.getMonth()!==mo, we2=(d===0||d===6);
@@ -462,12 +479,10 @@ function viewCal(){
     }
     html+='<div class="cal-week" style="--wk-h:'+h+'px"><div class="cal-cells">'+cells+'</div>'
       +'<div class="cal-bars">'+bars+'</div>'
-      +(canCollapse?'<button class="wk-collapse" data-wk="'+wkey+'">접기</button>':'')
+      +(expanded&&needMore?'<button class="wk-collapse" data-wk="'+wkey+'">접기</button>':'')
       +'</div>';
   }
-  return html+'<div class="empty" style="padding:16px 18px;font-size:12px;line-height:1.65">'
-    +'막대를 탭하면 목록에서 해당 작업을 편집할 수 있습니다.<br>'
-    +'가려진 작업이 있으면 <b>+N</b>을 탭해 그 주만 펼치거나, 상단 <b>모두 표시</b>로 전체를 펼칠 수 있습니다.</div></div>';
+  return html+'</div>';
 }
 
 /* ================= list ================= */
@@ -572,6 +587,37 @@ function applyColor(i,c){
   const sw=host.querySelector(".sw"); if(sw)sw.style.background=c;
 }
 
+/* ---- resize left panel (drag), persisted ---- */
+(function(){
+  let dragging=false, startX=0, startW=0;
+  const MIN=120, MAX=680;
+  function down(e){
+    const h=e.target.closest("#resizer"); if(!h) return;
+    dragging=true; h.classList.add("drag");
+    startX=(e.touches?e.touches[0].clientX:e.clientX); startW=state.leftW||346;
+    e.preventDefault();
+  }
+  function move(e){
+    if(!dragging) return;
+    const x=(e.touches?e.touches[0].clientX:e.clientX);
+    const w=Math.max(MIN,Math.min(MAX,startW+(x-startX)));
+    state.leftW=Math.round(w);
+    document.documentElement.style.setProperty("--left-w",state.leftW+"px");
+  }
+  function up(){
+    if(!dragging) return;
+    dragging=false;
+    const h=document.getElementById("resizer"); if(h)h.classList.remove("drag");
+    save();
+  }
+  stage.addEventListener("mousedown",down);
+  stage.addEventListener("touchstart",down,{passive:false});
+  window.addEventListener("mousemove",move);
+  window.addEventListener("touchmove",move,{passive:false});
+  window.addEventListener("mouseup",up);
+  window.addEventListener("touchend",up);
+})();
+
 /* ---- toolbar ---- */
 document.getElementById("view").addEventListener("click",e=>{
   const b=e.target.closest("button[data-v]"); if(!b)return;
@@ -645,13 +691,20 @@ document.getElementById("im-load").onclick=()=>{
 let tT; function toast(m){const el=document.getElementById("toast");el.textContent=m;el.classList.add("show");
   clearTimeout(tT);tT=setTimeout(()=>el.classList.remove("show"),1900);}
 
+/* re-fit calendar when the window size / orientation changes */
+let rzT;
+window.addEventListener("resize",()=>{
+  if(state.view!=="cal") return;
+  clearTimeout(rzT); rzT=setTimeout(()=>{ if(state.view==="cal") render(); },150);
+});
+
 /* ================= boot ================= */
 (function init(){
   let loaded=null;
   try{ if(location.hash.indexOf("#d=")===0) loaded=dec(location.hash); }catch(e){}
   const l=loadLocal();
   if(loaded) state.tasks=loaded;
-  else if(l&&Array.isArray(l.tasks)){ state.tasks=l.tasks; if(ZOOM[l.zoom])state.zoom=l.zoom; if(l.view)state.view=l.view; state.calAll=!!l.calAll; }
+  else if(l&&Array.isArray(l.tasks)){ state.tasks=l.tasks; if(ZOOM[l.zoom])state.zoom=l.zoom; if(l.view)state.view=l.view; state.calAll=!!l.calAll; if(l.leftW)state.leftW=l.leftW; }
   else { state.tasks=sample(); state.view=null; }
   if(!state.view) state.view=(window.innerWidth<700?"cal":"gantt");
   state.tasks.forEach(t=>{if(!t.id)t.id=uid();if(t.progress==null)t.progress=0;});
