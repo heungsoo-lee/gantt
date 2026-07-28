@@ -91,6 +91,22 @@
   .sw{width:20px;height:20px;flex:0 0 20px;padding:0;border-radius:5px;
     border:1px solid rgba(0,0,0,.14);cursor:pointer}
   .sw:hover{box-shadow:0 0 0 2px rgba(14,116,144,.25)}
+  .uico{color:#C0392B;font-size:13px;flex:0 0 auto;line-height:1}
+  .flag{width:24px;flex:0 0 24px;border:0;background:transparent;color:var(--line-strong);
+    cursor:pointer;font-size:14px;line-height:1;border-radius:5px;padding:0}
+  .flag:hover{background:#F1F5F9;color:var(--muted)}
+  .flag.on{color:#C0392B}
+  .row.urgent .r-left{background:#FCF3F0}
+  .row.urgent:hover .r-left{background:#FAECE7}
+  .bar.urgent{box-shadow:inset 3px 0 0 #C0392B}
+  .bar.done{opacity:.45}
+  .row.done .name{text-decoration:line-through;color:var(--muted)}
+  .cal-bar.urgent{box-shadow:inset 3px 0 0 #C0392B}
+  .cal-bar.done{opacity:.45}
+  .cal-bar.done span{text-decoration:line-through}
+  .card.urgent{border-color:#E8B8AC;background:#FDF8F6}
+  .card.done{opacity:.55}
+  .card.done .name{text-decoration:line-through;color:var(--muted)}
 
   .r-time{position:relative;flex:0 0 auto}
   .r-time .cell{position:absolute;top:0;bottom:0;border-right:1px solid var(--line)}
@@ -221,6 +237,7 @@
     </div>
     <button class="btn today" id="btn-today">오늘</button>
     <button class="btn" id="btn-all">모두 표시</button>
+    <button class="btn" id="btn-done">완료 숨기기</button>
     <button class="btn" id="btn-add">+ 작업</button>
     <button class="btn primary" id="btn-sync">동기화</button>
   </header>
@@ -252,12 +269,12 @@
 const DAY=86400000;
 const MONTHS=["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월"];
 const DOW=["일","월","화","수","목","금","토"];
-const BARC=["#D2542F","#C08A1E","#6E7A34","#1F8E7D","#2C7A82","#5B6777","#3C6091","#5A5391","#8A4A6F","#6E5849"];
-const SWATCHES=["#D2542F","#C08A1E","#6E7A34","#1F8E7D","#2C7A82","#5B6777","#3C6091","#5A5391","#8A4A6F","#6E5849"];
+const BARC=["#BC4A3C","#C7871B","#4E8A3C","#0F8A6E","#1C7C99","#2F63B4","#7A54C0","#B0468F","#5B6B7B","#8A5A44"];
+const SWATCHES=["#BC4A3C","#C7871B","#4E8A3C","#0F8A6E","#1C7C99","#2F63B4","#7A54C0","#B0468F","#5B6B7B","#8A5A44"];
 const ZOOM={day:{w:30,pad:3},week:{w:11,pad:7},month:{w:4.2,pad:16}};
 const CAL_LANES=5, LANE_H=20, LANE_TOP=24;
 
-let state={view:"gantt",zoom:"week",tasks:[],cal:null,calAll:false,leftW:346};
+let state={view:"gantt",zoom:"week",tasks:[],cal:null,calAll:false,leftW:346,hideDone:false};
 const openWeeks=new Set();
 let flashId=null;
 
@@ -272,7 +289,7 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;","
 
 /* ---- storage ---- */
 const KEY="gantt.v1";
-function save(){try{localStorage.setItem(KEY,JSON.stringify({view:state.view,zoom:state.zoom,calAll:state.calAll,leftW:state.leftW,tasks:state.tasks}));}catch(e){}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify({view:state.view,zoom:state.zoom,calAll:state.calAll,leftW:state.leftW,hideDone:state.hideDone,tasks:state.tasks}));}catch(e){}}
 function loadLocal(){try{const s=localStorage.getItem(KEY);return s?JSON.parse(s):null;}catch(e){return null;}}
 
 /* ---- encode / decode ----
@@ -285,11 +302,11 @@ function normD(s){
 }
 function enc(o){
   const lines=["# 일정 데이터 · 이 줄 아래를 모두 복사해서 옮기세요",
-               "# 작업명 | 시작 | 종료 | 진행% | 색상"];
+               "# 작업명 | 시작 | 종료 | 진행% | 색상 | 긴급(!)"];
   for(const t of o.tasks){
     lines.push([String(t.name||"").replace(/\|/g,"/").trim()||"이름 없음",
                 t.start, t.end, (Math.max(0,Math.min(100,+t.progress||0)))+"%",
-                t.color||""].join(" | ").replace(/\s*\|\s*$/,""));
+                t.color||"", t.urgent?"!":""].join(" | ").replace(/(\s*\|\s*)+$/,""));
   }
   return lines.join("\n");
 }
@@ -306,6 +323,7 @@ function decLines(text){
              progress:Math.max(0,Math.min(100,parseInt(f[3],10)||0))};
     const col=(f[4]||"").trim();
     if(/^#[0-9a-fA-F]{6}$/.test(col)) t.color=col;
+    if((f[5]||"").trim()==="!") t.urgent=true;
     if(parseD(t.end)<parseD(t.start)) t.end=t.start;
     out.push(t);
   }
@@ -330,6 +348,12 @@ function dec(text){
 
 let _n=0; function uid(){return "t"+Date.now().toString(36)+(_n++);}
 function colorOf(t,i){return t.color||BARC[i%BARC.length];}
+function isDone(t){return (+t.progress||0)>=100;}
+function isUrgent(t){ // 수동 플래그 또는 자동 규칙(미완료 + 종료일 3일 이내/초과)
+  if(isDone(t)) return false;
+  if(t.urgent) return true;
+  return daysBetween(today0(),parseD(t.end))<=3;
+}
 function inkOn(hex){ // 막대 색 밝기에 따라 흰/검정 글씨 선택
   const h=hex.replace("#",""); const r=parseInt(h.substr(0,2),16),g=parseInt(h.substr(2,2),16),b=parseInt(h.substr(4,2),16);
   const lin=c=>{c/=255;return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4);};
@@ -349,6 +373,9 @@ function render(){
   ba.classList.toggle("hide",state.view!=="cal");
   ba.textContent=state.calAll?"간략히":"모두 표시";
   ba.classList.toggle("primary",state.calAll);
+  const bd=document.getElementById("btn-done");
+  bd.textContent=state.hideDone?"완료 표시":"완료 숨기기";
+  bd.classList.toggle("primary",state.hideDone);
   document.querySelectorAll("#view button").forEach(b=>b.classList.toggle("on",b.dataset.v===state.view));
   document.querySelectorAll("#zoom button").forEach(b=>b.classList.toggle("on",b.dataset.z===state.zoom));
   const st=document.getElementById("stage");
@@ -392,21 +419,25 @@ function viewGantt(){
 
   let rows="";
   state.tasks.forEach((t,i)=>{
+    if(state.hideDone&&isDone(t)) return;
     const s=parseD(t.start),e=parseD(t.end);
     const left=daysBetween(start,s)*W, w=Math.max((daysBetween(s,e)+1)*W,6);
     const c=colorOf(t,i), pg=Math.max(0,Math.min(100,+t.progress||0));
-    rows+='<div class="row" data-i="'+i+'">'
+    const urg=isUrgent(t), done=isDone(t);
+    rows+='<div class="row'+(urg?" urgent":"")+(done?" done":"")+'" data-i="'+i+'">'
       +'<div class="r-left">'
         +'<button class="sw" title="색상" style="background:'+c+'"></button>'
+        +(urg?'<span class="uico" title="긴급">⚠</span>':'')
         +'<input class="name" value="'+esc(t.name)+'" data-k="name" placeholder="작업명">'
         +'<input class="date" type="date" value="'+t.start+'" data-k="start">'
         +'<input class="date" type="date" value="'+t.end+'" data-k="end">'
         +'<input class="prog" type="number" min="0" max="100" value="'+pg+'" data-k="progress">'
+        +'<button class="flag'+(t.urgent?" on":"")+'" title="긴급 표시">⚑</button>'
         +'<button class="del" title="삭제">×</button>'
       +'</div>'
       +'<div class="r-time" style="width:'+tlw+'px">'+weCells
-        +'<div class="bar" style="left:'+left+'px;width:'+w+'px;--barc:'+c+'">'
-        +'<div class="fill" style="width:'+pg+'%"></div><span class="lbl" style="color:'+inkOn(c)+'">'+pg+'%</span></div>'
+        +'<div class="bar'+(urg?" urgent":"")+(done?" done":"")+'" style="left:'+left+'px;width:'+w+'px;--barc:'+c+'">'
+        +'<div class="fill" style="width:'+pg+'%"></div><span class="lbl" style="color:'+inkOn(c)+'">'+(done?"✓":pg+"%")+'</span></div>'
       +'</div></div>';
   });
   return '<div class="grid"><div class="head">'
@@ -429,6 +460,7 @@ function viewCal(){
   const td=today0();
 
   const segs=state.tasks.map((t,i)=>({i,t,s:parseD(t.start),e:parseD(t.end),c:colorOf(t,i)}))
+    .filter(g=>!(state.hideDone&&isDone(g.t)))
     .sort((a,b)=>a.s-b.s || (b.e-b.s)-(a.e-a.s));
 
   // ---- fit the whole month into the visible area ----
@@ -462,9 +494,10 @@ function viewCal(){
     let bars="", overflow={};
     for(const p of placed){
       if(p.lane>=cap){ for(let d=p.a;d<=p.b;d++) overflow[d]=(overflow[d]||0)+1; continue; }
-      bars+='<div class="cal-bar'+(p.g.s<ws?" cutL":"")+(p.g.e>we?" cutR":"")+'" data-tid="'+p.g.t.id+'" '
+      const urg=isUrgent(p.g.t), done=isDone(p.g.t);
+      bars+='<div class="cal-bar'+(p.g.s<ws?" cutL":"")+(p.g.e>we?" cutR":"")+(urg?" urgent":"")+(done?" done":"")+'" data-tid="'+p.g.t.id+'" '
         +'style="left:calc('+(p.a/7*100)+'% + 2px);width:calc('+((p.b-p.a+1)/7*100)+'% - 4px);'
-        +'top:'+(LANE_TOP+p.lane*LANE_H)+'px;--barc:'+p.g.c+'"><span style="color:'+inkOn(p.g.c)+'">'+esc(p.g.t.name)+'</span></div>';
+        +'top:'+(LANE_TOP+p.lane*LANE_H)+'px;--barc:'+p.g.c+'"><span style="color:'+inkOn(p.g.c)+'">'+(urg?"⚠ ":"")+esc(p.g.t.name)+'</span></div>';
     }
     const hasMore=Object.keys(overflow).length>0;
     // fixed height so the month always fills the screen; expanded busy weeks may grow & scroll
@@ -492,15 +525,20 @@ function viewList(){
   const order=state.tasks.map((t,i)=>({t,i})).sort((a,b)=>parseD(a.t.start)-parseD(b.t.start));
   let out='<div class="list">';
   for(const {t,i} of order){
+    if(state.hideDone&&isDone(t)) continue;
     const c=colorOf(t,i), pg=Math.max(0,Math.min(100,+t.progress||0));
     const s=parseD(t.start), e=parseD(t.end), len=daysBetween(s,e)+1;
+    const urg=isUrgent(t), done=isDone(t);
     let meta;
-    if(td<s) meta="시작까지 "+daysBetween(td,s)+"일 · 총 "+len+"일";
-    else if(td>e) meta="종료됨 · 총 "+len+"일";
+    if(done) meta="완료 ✓ · 총 "+len+"일";
+    else if(td<s) meta="시작까지 "+daysBetween(td,s)+"일 · 총 "+len+"일";
+    else if(td>e) meta="기한 지남 · "+daysBetween(e,td)+"일 초과";
     else meta="진행 중 · 종료까지 "+daysBetween(td,e)+"일";
-    out+='<div class="card" data-i="'+i+'" data-tid="'+t.id+'">'
+    out+='<div class="card'+(urg?" urgent":"")+(done?" done":"")+'" data-i="'+i+'" data-tid="'+t.id+'">'
       +'<div class="c1"><button class="sw" title="색상" style="background:'+c+'"></button>'
+        +(urg?'<span class="uico" title="긴급">⚠</span>':'')
         +'<input class="name" value="'+esc(t.name)+'" data-k="name" placeholder="작업명">'
+        +'<button class="flag'+(t.urgent?" on":"")+'" title="긴급 표시">⚑</button>'
         +'<button class="del" title="삭제">×</button></div>'
       +'<div class="c2"><input class="date" type="date" value="'+t.start+'" data-k="start">'
         +'<span class="arw">→</span><input class="date" type="date" value="'+t.end+'" data-k="end">'
@@ -520,11 +558,14 @@ stage.addEventListener("input",e=>{
   const t=state.tasks[+host.dataset.i], k=inp.dataset.k;
   if(k==="name"){t.name=inp.value;save();return;}
   if(k==="progress"){
+    const was=isDone(t), wasU=isUrgent(t);
     const v=Math.max(0,Math.min(100,+inp.value||0)); t.progress=v;
     const bar=host.querySelector(".bar");
-    if(bar){bar.querySelector(".fill").style.width=v+"%";bar.querySelector(".lbl").textContent=v+"%";}
+    if(bar){bar.querySelector(".fill").style.width=v+"%";bar.querySelector(".lbl").textContent=(v>=100?"✓":v+"%");}
     const tr=host.querySelector(".track i"); if(tr)tr.style.width=v+"%";
-    save(); return;
+    save();
+    if(was!==isDone(t)||wasU!==isUrgent(t)) render();
+    return;
   }
 });
 stage.addEventListener("change",e=>{
@@ -541,6 +582,8 @@ stage.addEventListener("change",e=>{
 stage.addEventListener("click",e=>{
   const sw=e.target.closest(".sw");
   if(sw){ openPop(sw,+sw.closest("[data-i]").dataset.i); return; }
+  const fl=e.target.closest(".flag");
+  if(fl){ const t=state.tasks[+fl.closest("[data-i]").dataset.i]; t.urgent=!t.urgent; render(); return; }
   const del=e.target.closest(".del");
   if(del){ state.tasks.splice(+del.closest("[data-i]").dataset.i,1); render(); return; }
   const cb=e.target.closest(".cal-bar");
@@ -638,6 +681,9 @@ document.getElementById("btn-add").onclick=()=>{
 document.getElementById("btn-all").onclick=()=>{
   state.calAll=!state.calAll; openWeeks.clear(); render();
 };
+document.getElementById("btn-done").onclick=()=>{
+  state.hideDone=!state.hideDone; render();
+};
 document.getElementById("btn-today").onclick=()=>{
   if(state.view==="cal"){ const t=today0(); state.cal=new Date(t.getFullYear(),t.getMonth(),1); render(); }
   else if(state.view==="gantt") scrollToToday();
@@ -704,7 +750,7 @@ window.addEventListener("resize",()=>{
   try{ if(location.hash.indexOf("#d=")===0) loaded=dec(location.hash); }catch(e){}
   const l=loadLocal();
   if(loaded) state.tasks=loaded;
-  else if(l&&Array.isArray(l.tasks)){ state.tasks=l.tasks; if(ZOOM[l.zoom])state.zoom=l.zoom; if(l.view)state.view=l.view; state.calAll=!!l.calAll; if(l.leftW)state.leftW=l.leftW; }
+  else if(l&&Array.isArray(l.tasks)){ state.tasks=l.tasks; if(ZOOM[l.zoom])state.zoom=l.zoom; if(l.view)state.view=l.view; state.calAll=!!l.calAll; if(l.leftW)state.leftW=l.leftW; state.hideDone=!!l.hideDone; }
   else { state.tasks=sample(); state.view=null; }
   if(!state.view) state.view=(window.innerWidth<700?"cal":"gantt");
   state.tasks.forEach(t=>{if(!t.id)t.id=uid();if(t.progress==null)t.progress=0;});
