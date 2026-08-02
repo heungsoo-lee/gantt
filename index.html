@@ -158,6 +158,8 @@
   .modal .m-body li{font-size:13px;line-height:1.7}
   .modal .m-body .none{color:var(--muted);font-size:12.5px;margin:2px 0 0 2px}
   .modal .m-foot{display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid var(--line)}
+  #qrsvg svg{display:block;width:100%;max-width:330px;margin:10px auto 4px;border:1px solid var(--line);border-radius:8px}
+  .qrnav{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:8px}
   .card.done .name{text-decoration:line-through;color:var(--muted)}
 
   .r-time{position:relative;flex:0 0 auto}
@@ -306,7 +308,17 @@
       <h3>1 · 내보내기</h3>
       <p class="hint">현재 일정입니다. 한 줄이 작업 하나이며, 직접 읽고 고칠 수도 있습니다. [복사] 후 다른 애플 기기에 바로 붙여넣거나(범용 클립보드), 사내 웹메일로 자신에게 보내세요.</p>
       <textarea id="ex-text" onclick="this.select()" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
-      <div class="rowbtn"><button class="btn primary" id="ex-copy">텍스트 복사</button></div>
+      <div class="rowbtn"><button class="btn primary" id="ex-copy">텍스트 복사</button>
+        <button class="btn" id="ex-qr">QR 표시</button></div>
+      <div id="qrbox" class="hide">
+        <div class="qrnav">
+          <button class="btn" id="qr-prev">‹</button>
+          <span id="qr-idx" style="font-family:var(--mono);font-size:12px"></span>
+          <button class="btn" id="qr-next">›</button>
+        </div>
+        <div id="qrsvg"></div>
+        <p class="hint" id="qr-hint" style="text-align:center"></p>
+      </div>
       <div class="sep"></div>
       <h3>2 · 불러오기</h3>
       <p class="hint">받은 텍스트를 붙여넣고 [불러오기]를 누르면 이 기기의 일정을 그것으로 대체합니다. 앞뒤에 메일 서명 등이 섞여 있어도 일정 줄만 골라냅니다.</p>
@@ -536,6 +548,139 @@ function sample(){const b=today0();
   return [mk("문헌 조사",-7,6,100,"연구 과제"),mk("모델 개발",0,13,45,"연구 과제"),
           mk("시험·검증",10,9,0,"연구 과제"),mk("보고서 작성",18,7,0,"연구 과제"),
           {id:uid(),name:"주간 팀 회의",start:fmtD(addDays(b,-7)),end:fmtD(addDays(b,-7)),progress:0,repeat:{f:"W",d:[1],n:1},time:"10:00~11:00"}];}
+
+/* ---- QR 생성기 (바이트 모드 · EC레벨 M · 마스크 0 고정 · 버전 1~30) ---- */
+const QRGEN=(function(){
+  const ECC_M=[10,16,26,18,24,16,18,22,22,26,30,22,22,24,24,28,28,26,26,26,26,28,28,28,28,28,28,28,28,28];
+  const NB_M =[1,1,1,2,2,4,4,4,5,5,5,8,9,9,10,10,11,13,14,16,17,17,18,20,21,23,25,26,28,29];
+  // GF(256), poly 0x11D
+  const EXP=new Array(512), LOG=new Array(256);
+  (function(){ let x=1; for(let i=0;i<255;i++){EXP[i]=x; LOG[x]=i; x<<=1; if(x&0x100)x^=0x11D;} for(let i=255;i<512;i++)EXP[i]=EXP[i-255]; })();
+  function gmul(a,b){ return (a&&b)?EXP[LOG[a]+LOG[b]]:0; }
+  function rsGen(n){ let g=[1];
+    for(let i=0;i<n;i++){ const ng=new Array(g.length+1).fill(0);
+      for(let j=0;j<g.length;j++){ ng[j]^=gmul(g[j],EXP[i]); ng[j+1]^=g[j]; }
+      g=ng; }
+    return g; }
+  function rsRemainder(data,ecLen){
+    const g=rsGen(ecLen), r=new Array(ecLen).fill(0);
+    for(const b of data){ const f=b^r[0]; r.shift(); r.push(0);
+      if(f) for(let j=0;j<ecLen;j++) r[j]^=gmul(g[j+1],EXP[LOG[f]]); }
+    return r; }
+  function rawBits(v){ let r=(16*v+128)*v+64;
+    if(v>=2){ const a=Math.floor(v/7)+2; r-=(25*a-10)*a-55; if(v>=7)r-=36; }
+    return r; }
+  function totalCW(v){ return Math.floor(rawBits(v)/8); }
+  function dataCW(v){ return totalCW(v)-NB_M[v-1]*ECC_M[v-1]; }
+  function capBytes(v){ const cnt=v<10?8:16; return Math.floor((dataCW(v)*8-4-cnt)/8); }
+  function pickVer(len){ for(let v=1;v<=30;v++) if(capBytes(v)>=len) return v; return -1; }
+  function bch(val,poly,deg){ let r=val<<deg;
+    for(let i=14;i>=deg;i--){ /* generic below */ }
+    return r; }
+  function bchRem(val,poly){ // poly 최고차수 기준 나머지
+    const deg=31-Math.clz32(poly);
+    let v=val;
+    for(let i=31-Math.clz32(v);i>=deg;i=31-Math.clz32(v)){
+      v^=poly<<(i-deg); if(!v)break;
+    }
+    return v; }
+  function fmtBits(mask){ // EC M = 00
+    const d=(0<<3)|mask, r=bchRem(d<<10,0x537);
+    return ((d<<10)|r)^0x5412; }
+  function verBits(v){ const r=bchRem(v<<12,0x1F25); return (v<<12)|r; }
+  function alignPos(v){
+    if(v===1) return [];
+    const n=Math.floor(v/7)+2, size=17+4*v;
+    const step=(v===32)?26:Math.floor((v*4+n*2+1)/(n*2-2))*2;
+    const pos=[6]; let p=size-7;
+    for(let i=0;i<n-1;i++){ pos.splice(1,0,p); p-=step; }
+    return pos; }
+  function encode(text){ // text: 바이트 문자열(각 charCode ≤255)
+    const bytes=[]; for(let i=0;i<text.length;i++) bytes.push(text.charCodeAt(i)&0xFF);
+    const v=pickVer(bytes.length); if(v<0) return null;
+    const cnt=v<10?8:16;
+    // 비트 버퍼
+    const bits=[]; const put=(val,n)=>{ for(let i=n-1;i>=0;i--) bits.push((val>>>i)&1); };
+    put(4,4); put(bytes.length,cnt);
+    for(const b of bytes) put(b,8);
+    const dcw=dataCW(v);
+    const cap=dcw*8;
+    put(0,Math.min(4,cap-bits.length));
+    while(bits.length%8) bits.push(0);
+    const dcws=[]; for(let i=0;i<bits.length;i+=8){ let x=0; for(let j=0;j<8;j++) x=(x<<1)|bits[i+j]; dcws.push(x); }
+    const pads=[0xEC,0x11]; let pi=0;
+    while(dcws.length<dcw){ dcws.push(pads[pi]); pi^=1; }
+    // 블록 분할 + EC
+    const nb=NB_M[v-1], ec=ECC_M[v-1];
+    const shortLen=Math.floor(dcw/nb), numLong=dcw%nb;
+    const blocks=[], eccs=[]; let off=0;
+    for(let b=0;b<nb;b++){ const len=shortLen+(b>=nb-numLong?1:0);
+      const d=dcws.slice(off,off+len); off+=len;
+      blocks.push(d); eccs.push(rsRemainder(d,ec)); }
+    // 인터리브
+    const out=[];
+    const maxLen=shortLen+(numLong?1:0);
+    for(let i=0;i<maxLen;i++) for(let b=0;b<nb;b++) if(i<blocks[b].length) out.push(blocks[b][i]);
+    for(let i=0;i<ec;i++) for(let b=0;b<nb;b++) out.push(eccs[b][i]);
+    // ---- 매트릭스 ----
+    const size=17+4*v;
+    const M=Array.from({length:size},()=>new Array(size).fill(null)); // null=미정
+    const FUN=Array.from({length:size},()=>new Array(size).fill(false));
+    const set=(r,c,val)=>{ M[r][c]=val?1:0; FUN[r][c]=true; };
+    function finder(r,c){
+      for(let dr=-1;dr<=7;dr++) for(let dc=-1;dc<=7;dc++){
+        const rr=r+dr, cc=c+dc; if(rr<0||cc<0||rr>=size||cc>=size) continue;
+        const on=(dr>=0&&dr<=6&&dc>=0&&dc<=6)&&(dr===0||dr===6||dc===0||dc===6||(dr>=2&&dr<=4&&dc>=2&&dc<=4));
+        set(rr,cc,on);
+      } }
+    finder(0,0); finder(0,size-7); finder(size-7,0);
+    // 타이밍
+    for(let i=8;i<size-8;i++){ if(!FUN[6][i])set(6,i,i%2===0); if(!FUN[i][6])set(i,6,i%2===0); }
+    // 얼라인먼트
+    const ap=alignPos(v);
+    for(const r of ap) for(const c of ap){
+      const corner=(r<=8&&c<=8)||(r<=8&&c>=size-9)||(r>=size-9&&c<=8);
+      if(corner) continue; // 파인더 모서리 3곳만 제외
+      for(let dr=-2;dr<=2;dr++) for(let dc=-2;dc<=2;dc++)
+        set(r+dr,c+dc, Math.max(Math.abs(dr),Math.abs(dc))!==1);
+    }
+    // 포맷 자리 예약(값은 뒤에) + 다크 모듈
+    const fb=fmtBits(0), gB=(x,i)=>(x>>>i)&1;
+    // 사본 1 (좌상단)
+    for(let i=0;i<=5;i++) set(8,i,gB(fb,i));
+    set(8,7,gB(fb,6)); set(8,8,gB(fb,7)); set(7,8,gB(fb,8));
+    for(let i=9;i<15;i++) set(14-i,8,gB(fb,i));
+    // 사본 2 (하단 세로 7 + 우측 가로 8)
+    for(let i=0;i<7;i++) set(size-1-i,8,gB(fb,i));
+    for(let i=7;i<15;i++) set(8,size-15+i,gB(fb,i));
+    set(size-8,8,1); // 다크 모듈
+    // 버전 정보
+    if(v>=7){ const vb=verBits(v);
+      for(let i=0;i<18;i++){ const bit=(vb>>>i)&1;
+        set(Math.floor(i/3), size-11+(i%3), bit);
+        set(size-11+(i%3), Math.floor(i/3), bit);
+      } }
+    // 데이터 배치(지그재그) + 마스크0
+    let bi=0; const total=out.length*8;
+    const dataBit=k=> k<total ? (out[k>>3]>>>(7-(k&7)))&1 : 0;
+    let upward=true;
+    for(let col=size-1;col>0;col-=2){
+      if(col===6) col--;
+      for(let k=0;k<size;k++){
+        const r=upward?size-1-k:k;
+        for(const c of [col,col-1]){
+          if(FUN[r][c]) continue;
+          let bit=dataBit(bi++); 
+          if((r+c)%2===0) bit^=1; // 마스크 0
+          M[r][c]=bit;
+        }
+      }
+      upward=!upward;
+    }
+    return {size,M,v,placed:bi,totalBits:total,raw:rawBits(v)};
+  }
+  return {encode,capBytes,pickVer,totalCW,dataCW,fmtBits,verBits,alignPos,rsRemainder,rsGen,EXP,LOG,gmul};
+})();
 
 /* ================= dispatcher ================= */
 function render(){
@@ -1141,6 +1286,7 @@ function scrollToToday(){
 const sheet=document.getElementById("sheet"), backdrop=document.getElementById("backdrop");
 document.getElementById("btn-sync").onclick=()=>{
   document.getElementById("ex-text").value=enc(state);
+  document.getElementById("qrbox").classList.add("hide");
   sheet.classList.add("open"); backdrop.classList.add("open");
 };
 function closeSheet(){sheet.classList.remove("open");backdrop.classList.remove("open");}
@@ -1180,6 +1326,99 @@ document.getElementById("im-load").onclick=()=>{
 };
 let tT; function toast(m){const el=document.getElementById("toast");el.textContent=m;el.classList.add("show");
   clearTimeout(tT);tT=setTimeout(()=>el.classList.remove("show"),1900);}
+
+/* ---- QR 동기화 ---- */
+let qrChunks=[], qrIdx=0, pendingQR=null;
+function b64u(t){ return btoa(unescape(encodeURIComponent(t))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
+function unb64u(t){ return decodeURIComponent(escape(atob(t.replace(/-/g,"+").replace(/_/g,"/")))); }
+function buildQRChunks(){
+  const text=enc(state);
+  if(location.protocol==="file:"){
+    const bytes=unescape(encodeURIComponent(text));
+    if(bytes.length<=QRGEN.capBytes(30)) return {mode:"text",chunks:[bytes]};
+    return {mode:"toolong"};
+  }
+  const b=b64u(text);
+  const id=Math.random().toString(36).slice(2,5).padEnd(3,"0");
+  const base=location.origin+location.pathname+"#q=";
+  const per=QRGEN.capBytes(22)-(base.length+12);
+  if(per<50) return {mode:"toolong"};
+  const total=Math.ceil(b.length/per)||1;
+  const chunks=[];
+  for(let i=0;i<total;i++)
+    chunks.push(base+id+"."+(i+1)+"."+total+"."+b.slice(i*per,(i+1)*per));
+  return {mode:"url",chunks};
+}
+function qrSVG(str){
+  const r=QRGEN.encode(str); if(!r) return null;
+  const Q=4, W=r.size+Q*2;
+  let d="";
+  for(let y=0;y<r.size;y++) for(let x=0;x<r.size;x++)
+    if(r.M[y][x]) d+="M"+(x+Q)+" "+(y+Q)+"h1v1h-1z";
+  return '<svg viewBox="0 0 '+W+' '+W+'" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">'
+    +'<rect width="'+W+'" height="'+W+'" fill="#FFFFFF"/>'
+    +'<path d="'+d+'" fill="#000000"/></svg>';
+}
+function showQR(){
+  const box=document.getElementById("qrbox");
+  const built=buildQRChunks();
+  if(built.mode==="toolong"){
+    box.classList.remove("hide");
+    document.getElementById("qrsvg").innerHTML="";
+    document.getElementById("qr-idx").textContent="";
+    document.getElementById("qr-hint").textContent="일정이 많아 QR로 담기 어렵습니다. 텍스트 복사 방식을 이용하세요.";
+    return;
+  }
+  qrChunks=built.chunks; qrIdx=0;
+  box.classList.remove("hide");
+  box.dataset.mode=built.mode;
+  renderQR();
+}
+function renderQR(){
+  const svg=qrSVG(qrChunks[qrIdx]);
+  document.getElementById("qrsvg").innerHTML=svg||"";
+  const multi=qrChunks.length>1;
+  document.getElementById("qr-idx").textContent=(qrIdx+1)+" / "+qrChunks.length;
+  document.getElementById("qr-prev").classList.toggle("hide",!multi);
+  document.getElementById("qr-next").classList.toggle("hide",!multi);
+  const box=document.getElementById("qrbox");
+  document.getElementById("qr-hint").textContent =
+    box.dataset.mode==="text"
+      ? "아이폰 카메라로 스캔 후 [복사]를 눌러, 앱의 불러오기에 붙여넣으세요."
+      : (multi
+        ? "아이폰 카메라로 1번부터 순서대로 모두 스캔하세요. 앱이 자동으로 모아서 불러옵니다."
+        : "아이폰 카메라로 스캔하면 앱이 열리며 일정을 불러올 수 있습니다.");
+}
+document.getElementById("ex-qr").onclick=showQR;
+document.getElementById("qr-prev").onclick=()=>{ if(qrIdx>0){qrIdx--;renderQR();} };
+document.getElementById("qr-next").onclick=()=>{ if(qrIdx<qrChunks.length-1){qrIdx++;renderQR();} };
+function handleQRHash(){
+  const h=location.hash||"";
+  if(h.indexOf("#q=")!==0) return false;
+  let body=h.slice(3);
+  try{ body=decodeURIComponent(body); }catch(e){}
+  try{ history.replaceState(null,"",location.pathname+location.search); }catch(e){}
+  const m=/^([a-z0-9]{3})\.(\d+)\.(\d+)\.([A-Za-z0-9\-_]+)$/.exec(body);
+  if(!m){ setTimeout(()=>toast("QR 데이터를 해석할 수 없습니다"),400); return true; }
+  const id=m[1], idx=+m[2], total=+m[3];
+  let buf=null;
+  try{ buf=JSON.parse(localStorage.getItem("gantt.qrbuf")||"null"); }catch(e){}
+  if(!buf||buf.id!==id||buf.total!==total) buf={id,total,parts:{}};
+  buf.parts[idx]=m[4];
+  const got=Object.keys(buf.parts).length;
+  if(got<total){
+    try{ localStorage.setItem("gantt.qrbuf",JSON.stringify(buf)); }catch(e){}
+    setTimeout(()=>toast("QR "+got+"/"+total+" 수신 — 나머지 QR을 계속 스캔하세요"),400);
+    return true;
+  }
+  try{ localStorage.removeItem("gantt.qrbuf"); }catch(e){}
+  let all=""; for(let i=1;i<=total;i++) all+=buf.parts[i]||"";
+  let text=null;
+  try{ text=unb64u(all); }catch(e){}
+  if(!text){ setTimeout(()=>toast("QR 데이터 복원에 실패했습니다. 처음부터 다시 스캔해 주세요"),400); return true; }
+  pendingQR=text;
+  return true;
+}
 
 /* ---- 주간 브리핑 ---- */
 function fmtDW(d){ return shortD(fmtD(d))+"("+DOW[d.getDay()]+")"; }
@@ -1274,8 +1513,9 @@ window.addEventListener("resize",()=>{
 
 /* ================= boot ================= */
 (function init(){
-  let loaded=null;
-  try{ if(location.hash.indexOf("#d=")===0) loaded=dec(location.hash); }catch(e){}
+  let loaded=null, qrHandled=false;
+  try{ qrHandled=handleQRHash(); }catch(e){}
+  try{ if(!qrHandled&&location.hash.indexOf("#d=")===0) loaded=dec(location.hash); }catch(e){}
   const l=loadLocal();
   if(loaded) state.tasks=loaded;
   else if(l&&Array.isArray(l.tasks)){ state.tasks=l.tasks; if(ZOOM[l.zoom])state.zoom=l.zoom; if(l.view)state.view=l.view; state.calAll=!!l.calAll; if(l.leftW)state.leftW=l.leftW; state.hideDone=!!l.hideDone; if(l.theme)state.theme=l.theme; if(Array.isArray(l.gcol))state.gcol=l.gcol; }
@@ -1283,6 +1523,11 @@ window.addEventListener("resize",()=>{
   if(!state.view) state.view=(window.innerWidth<700?"cal":"gantt");
   state.tasks.forEach(t=>{if(!t.id)t.id=uid();if(t.progress==null)t.progress=0;normRepeat(t);});
   render(); scrollToToday();
+  if(pendingQR){
+    document.getElementById("btn-sync").onclick();
+    document.getElementById("im-text").value=pendingQR; pendingQR=null;
+    setTimeout(()=>toast("QR 수신 완료 — [불러오기]를 누르세요. 홈 화면 앱을 쓰신다면 이 텍스트를 복사해 가세요"),500);
+  }
 })();
 </script>
 </body>
