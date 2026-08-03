@@ -557,11 +557,11 @@ const QRGEN=(function(){
   const EXP=new Array(512), LOG=new Array(256);
   (function(){ let x=1; for(let i=0;i<255;i++){EXP[i]=x; LOG[x]=i; x<<=1; if(x&0x100)x^=0x11D;} for(let i=255;i<512;i++)EXP[i]=EXP[i-255]; })();
   function gmul(a,b){ return (a&&b)?EXP[LOG[a]+LOG[b]]:0; }
-  function rsGen(n){ let g=[1];
+  function rsGen(n){ let g=[1];              // 최저차수 우선으로 전개 후
     for(let i=0;i<n;i++){ const ng=new Array(g.length+1).fill(0);
       for(let j=0;j<g.length;j++){ ng[j]^=gmul(g[j],EXP[i]); ng[j+1]^=g[j]; }
       g=ng; }
-    return g; }
+    return g.reverse(); }                     // 최고차수 우선(g[0]=1)으로 반환
   function rsRemainder(data,ecLen){
     const g=rsGen(ecLen), r=new Array(ecLen).fill(0);
     for(const b of data){ const f=b^r[0]; r.shift(); r.push(0);
@@ -646,13 +646,13 @@ const QRGEN=(function(){
     }
     // 포맷 자리 예약(값은 뒤에) + 다크 모듈
     const fb=fmtBits(0), gB=(x,i)=>(x>>>i)&1;
-    // 사본 1 (좌상단)
-    for(let i=0;i<=5;i++) set(8,i,gB(fb,i));
-    set(8,7,gB(fb,6)); set(8,8,gB(fb,7)); set(7,8,gB(fb,8));
-    for(let i=9;i<15;i++) set(14-i,8,gB(fb,i));
-    // 사본 2 (하단 세로 7 + 우측 가로 8)
-    for(let i=0;i<7;i++) set(size-1-i,8,gB(fb,i));
-    for(let i=7;i<15;i++) set(8,size-15+i,gB(fb,i));
+    // 사본 1 (좌상단): 비트0~5 = 열8·행0~5, 비트6~8 = (7,8)(8,8)(8,7), 비트9~14 = 행8·열5~0
+    for(let i=0;i<=5;i++) set(i,8,gB(fb,i));
+    set(7,8,gB(fb,6)); set(8,8,gB(fb,7)); set(8,7,gB(fb,8));
+    for(let i=9;i<15;i++) set(8,14-i,gB(fb,i));
+    // 사본 2: 비트0~7 = 행8·열(size-1..size-8), 비트8~14 = 열8·행(size-7..size-1)
+    for(let i=0;i<8;i++) set(8,size-1-i,gB(fb,i));
+    for(let i=8;i<15;i++) set(size-15+i,8,gB(fb,i));
     set(size-8,8,1); // 다크 모듈
     // 버전 정보
     if(v>=7){ const vb=verBits(v);
@@ -1333,7 +1333,8 @@ function b64u(t){ return btoa(unescape(encodeURIComponent(t))).replace(/\+/g,"-"
 function unb64u(t){ return decodeURIComponent(escape(atob(t.replace(/-/g,"+").replace(/_/g,"/")))); }
 function buildQRChunks(){
   const text=enc(state);
-  if(location.protocol==="file:"){
+  const httpish=/^https?:$/.test(location.protocol);
+  if(!httpish){ // 로컬 파일·미리보기 등: 실제 앱 주소가 없으므로 읽을 수 있는 텍스트형 QR
     const bytes=unescape(encodeURIComponent(text));
     if(bytes.length<=QRGEN.capBytes(30)) return {mode:"text",chunks:[bytes]};
     return {mode:"toolong"};
