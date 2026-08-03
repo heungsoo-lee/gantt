@@ -256,8 +256,8 @@
       <div class="fld"><label for="qr-scope">보낼 범위</label><select id="qr-scope"></select></div>
       <label class="pick" style="border:0;padding:0 0 12px">
         <input type="checkbox" id="qr-skipdone" checked><span>완료한 항목은 빼기</span></label>
-      <div class="fld"><label for="qr-url">앱 주소 · 아이폰이 이 주소를 엽니다</label>
-        <input type="text" id="qr-url" placeholder="https://…/check.html" spellcheck="false"
+      <div class="fld"><label for="qr-url">앱 주소 · 아이폰이 이 주소를 엽니다 (인터넷으로 열었다면 자동으로 채워집니다)</label>
+        <input type="text" id="qr-url" placeholder="https://사용자이름.github.io/gantt/check.html" spellcheck="false"
                autocapitalize="off" autocorrect="off"></div>
       <p class="hint" id="qr-info"></p>
       <div style="text-align:center">
@@ -1004,7 +1004,8 @@ function openQR(){
   sel.innerHTML='<option value="all">전체</option>'+
     state.groups.map(g=>'<option value="'+g.id+'">'+esc(g.name)+'</option>').join("");
   sel.value = (state.cur!=="all"&&grpById(state.cur)) ? state.cur : "all";
-  document.getElementById("qr-url").value = state.appUrl || defaultAppUrl();
+  /* 인터넷 주소로 열려 있으면 그 주소가 언제나 정확하므로 그것을 우선 */
+  document.getElementById("qr-url").value = defaultAppUrl() || state.appUrl || "";
   openOverlay("m-qr");
   buildQR();
 }
